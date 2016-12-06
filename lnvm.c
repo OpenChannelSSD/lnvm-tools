@@ -1,7 +1,7 @@
 #include "lnvm.h"
 #include <omp.h>
 
-static int dev_verify(int fd, struct arguments *args)
+static int dev_verify(struct arguments *args)
 {
 	NVM_DEV dev;
 	NVM_GEO geo;
@@ -26,9 +26,12 @@ static int dev_verify(int fd, struct arguments *args)
 	max_lun = geo.nluns;
 	max_blk = geo.nblocks;
 
-/*	max_ch = 1;
+	int report[geo.nchannels][geo.nluns][geo.nblocks];
+
+	memset(&report, 0, sizeof(report));
+	max_ch = 1;
 	max_lun = 1;
-	max_blk = 32;*/
+	max_blk = 32;
 
 	do_write = 1;
 	do_erase = 1;
@@ -36,15 +39,14 @@ static int dev_verify(int fd, struct arguments *args)
 	magic_flag = NVM_MAGIC_FLAG_QUAD;
 
 	/* Parameters end */
-
 	buf = nvm_buf_alloc(geo, geo.vpg_nbytes);
 
 	if (do_erase) {
 	printf("Erase it all!\n");
+#pragma omp parallel for collapse (2) schedule (static)
 	for (int ch = 0; ch < max_ch; ch++) {
-		printf("CH: %u\n", ch);
 		for (int lun = 0; lun < max_lun; lun++) {
-			printf("LUN: %u\n", lun);
+			/*printf("%u ", lun);*/
 			for (int blk = skip_blk; blk < max_blk; blk++) {
 				NVM_ADDR addr[geo.nplanes];
 				NVM_RET ret;
@@ -57,10 +59,10 @@ static int dev_verify(int fd, struct arguments *args)
 				}
 
 				if (nvm_addr_erase(dev, addr, geo.nplanes, magic_flag, &ret)) {
-					perror("erase failed");
+					report[ch][lun][blk] = 0x10000;
+/*					perror("erase failed");
 					nvm_ret_pr(&ret);
-					nvm_addr_pr(addr[0]);
-					break;
+					nvm_addr_pr(addr[0]);*/
 				}
 			}
 		}
@@ -90,10 +92,11 @@ static int dev_verify(int fd, struct arguments *args)
 					}
 
 					if (nvm_addr_write(dev, addr, geo.nplanes * geo.nsectors, buf, buf, magic_flag, &ret)) {
-						perror("write failed");
+						report[ch][lun][blk] |= 0x1000;
+/*						perror("write failed");
 						nvm_ret_pr(&ret);
-						nvm_addr_pr(addr[0]);
-						break;
+						nvm_addr_pr(addr[0]);*/
+						//break;
 					}
 				}
 			}
@@ -123,10 +126,11 @@ static int dev_verify(int fd, struct arguments *args)
 					}
 
 					if (nvm_addr_read(dev, addr, geo.nplanes * geo.nsectors, buf, buf, magic_flag, &ret)) {
-						perror("read failed");
+						report[ch][lun][blk]++;
+/*						perror("read failed");
 						nvm_ret_pr(&ret);
-						nvm_addr_pr(addr[0]);
-						break;
+						nvm_addr_pr(addr[0]);*/
+						//break;
 					}
 				}
 			}
@@ -134,6 +138,17 @@ static int dev_verify(int fd, struct arguments *args)
 	}
 
 	free(buf);
+	for (int ch = 0; ch < max_ch; ch++) {
+		for (int lun = 0; lun < max_lun; lun++) {
+			printf("CH: %u LUN: %u\n------------\n", ch, lun);
+			for (int blk = 0; blk < max_blk; blk++) {
+				if (!report[ch][lun][blk])
+					continue;
+				printf("%03u: %u %u %u\n", blk, (report[ch][lun][blk] & 0x10000) >> 16, (report[ch][lun][blk] & 0x1000) >> 12, report[ch][lun][blk] & 0xfff);
+			}
+		}
+	}
+
 	return 0;
 }
 
@@ -200,7 +215,7 @@ static void cmd_dev_verify(struct argp_state *state, struct arguments *args)
 }
 
 const char *argp_program_version = "1.0";
-const char *argp_program_bug_address = "Matias Bjørling <mb@lightnvm.io>";
+const char *argp_program_bug_address = "Matias Bjørling <matias@cnexlabs.com>";
 static char args_doc_global[] =
 		"\nSupported commands are:\n"
 		"  verify       Verify media\n";
@@ -228,28 +243,18 @@ static struct argp argp = {NULL, parse_opt, "[<cmd> [CMD-OPTIONS]]",
 
 int main(int argc, char **argv)
 {
-	char dev[FILENAME_MAX] = "/dev/lightnvm/control";
-	int fd, ret = 0;
+	int ret = 0;
 	struct arguments args = { 0 };
 
 	argp_parse(&argp, argc, argv, ARGP_IN_ORDER, NULL, &args);
 
-	fd = open(dev, O_WRONLY);
-	if (fd < 0) {
-		printf("Failed to open LightNVM mgmt %s. Error: %d\n",
-								dev, fd);
-		return -EINVAL;
-	}
-
 	switch (args.cmdtype) {
 	case LIGHTNVM_DEV_VERIFY:
-		dev_verify(fd, &args);
+		dev_verify(&args);
 		break;
 	default:
 		printf("No valid command given.\n");
 	}
-
-	close(fd);
 
 	return ret;
 }
