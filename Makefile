@@ -1,5 +1,5 @@
-CFLAGS := -m64 -std=gnu99 -O2 -g -L/usr/lib/liblightnvm.a -D_GNU_SOURCE -Wall
-LDFLAGS := -lm
+CFLAGS := -std=gnu99 -O2 -g -Wall
+LDFLAGS := -llightnvm -fopenmp
 EXEC = lnvm
 INSTALL ?= install
 DESTDIR =

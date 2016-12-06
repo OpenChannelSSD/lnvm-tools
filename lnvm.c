@@ -1,16 +1,139 @@
 #include "lnvm.h"
+#include <omp.h>
 
 static int dev_verify(int fd, struct arguments *args)
 {
 	NVM_DEV dev;
 	NVM_GEO geo;
+	void *buf;
+	int max_ch, max_lun, max_blk, skip_blk;
+	int do_write, do_erase;
+	int magic_flag;
 
-	dev = nvm_dev_open("nvme0n1");
+	dev = nvm_dev_open("/dev/nvme1n1");
 	if (!dev) {
 		printf("My life is not worth living anymore\n");
 		return -EINVAL;
 	}
 	geo = nvm_dev_attr_geo(dev);
+
+	nvm_dev_pr(dev);
+	nvm_geo_pr(geo);
+
+	/* Parameters begin */
+	skip_blk = 2;
+	max_ch = geo.nchannels;
+	max_lun = geo.nluns;
+	max_blk = geo.nblocks;
+
+/*	max_ch = 1;
+	max_lun = 1;
+	max_blk = 32;*/
+
+	do_write = 1;
+	do_erase = 1;
+
+	magic_flag = NVM_MAGIC_FLAG_QUAD;
+
+	/* Parameters end */
+
+	buf = nvm_buf_alloc(geo, geo.vpg_nbytes);
+
+	if (do_erase) {
+	printf("Erase it all!\n");
+	for (int ch = 0; ch < max_ch; ch++) {
+		printf("CH: %u\n", ch);
+		for (int lun = 0; lun < max_lun; lun++) {
+			printf("LUN: %u\n", lun);
+			for (int blk = skip_blk; blk < max_blk; blk++) {
+				NVM_ADDR addr[geo.nplanes];
+				NVM_RET ret;
+
+				for (int pl = 0; pl < geo.nplanes; pl++) {
+					addr[pl].g.ch = ch;
+					addr[pl].g.lun = lun;
+					addr[pl].g.blk = blk;
+					addr[pl].g.pl = pl;
+				}
+
+				if (nvm_addr_erase(dev, addr, geo.nplanes, magic_flag, &ret)) {
+					perror("erase failed");
+					nvm_ret_pr(&ret);
+					nvm_addr_pr(addr[0]);
+					break;
+				}
+			}
+		}
+	}
+	}
+
+	if (do_write) {
+	printf("Write it all!\n");
+#pragma omp parallel for collapse (3) schedule (static)
+	for (int ch = 0; ch < max_ch; ch++) {
+		//printf("CH: %u\n", ch);
+		for (int lun = 0; lun < max_lun; lun++) {
+			//printf("LUN: %u\n", lun);
+			for (int blk = skip_blk; blk < max_blk; blk++) {
+				for (int pg = 0; pg < geo.npages; pg++) {
+					NVM_ADDR addr[geo.nplanes * geo.nsectors];
+					NVM_RET ret;
+
+					for (int i = 0; i < geo.nplanes * geo.nsectors; i++) {
+						addr[i].g.ch = ch;
+						addr[i].g.lun = lun;
+						addr[i].g.pg = pg;
+						addr[i].g.blk = blk;
+
+						addr[i].g.sec = i % geo.nsectors;
+						addr[i].g.pl = i / geo.nsectors;
+					}
+
+					if (nvm_addr_write(dev, addr, geo.nplanes * geo.nsectors, buf, buf, magic_flag, &ret)) {
+						perror("write failed");
+						nvm_ret_pr(&ret);
+						nvm_addr_pr(addr[0]);
+						break;
+					}
+				}
+			}
+		}
+	}
+	}
+
+	printf("Read it all!\n");
+#pragma omp parallel for collapse (3) schedule (static)
+	for (int ch = 0; ch < max_ch; ch++) {
+		/*printf("CH: %u\n", ch);*/
+		for (int lun = 0; lun < max_lun; lun++) {
+			/*printf("LUN: %u\n", lun);*/
+			for (int blk = skip_blk; blk < max_blk; blk++) {
+				for (int pg = 0; pg < geo.npages; pg++) {
+					NVM_ADDR addr[geo.nplanes * geo.nsectors];
+					NVM_RET ret;
+
+					for (int i = 0; i < geo.nplanes * geo.nsectors; i++) {
+						addr[i].g.ch = ch;
+						addr[i].g.lun = lun;
+						addr[i].g.pg = pg;
+						addr[i].g.blk = blk;
+
+						addr[i].g.sec = i % geo.nsectors;
+						addr[i].g.pl = i / geo.nsectors;
+					}
+
+					if (nvm_addr_read(dev, addr, geo.nplanes * geo.nsectors, buf, buf, magic_flag, &ret)) {
+						perror("read failed");
+						nvm_ret_pr(&ret);
+						nvm_addr_pr(addr[0]);
+						break;
+					}
+				}
+			}
+		}
+	}
+
+	free(buf);
 	return 0;
 }
 
@@ -44,7 +167,7 @@ static error_t parse_dev_verify_opt(int key, char *arg, struct argp_state *state
 			argp_usage(state);
 		break;
 	case ARGP_KEY_END:
-		if (args->arg_num < 1)
+		if (args->arg_num < 0)
 			argp_usage(state);
 		break;
 	default:
