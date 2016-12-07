@@ -36,7 +36,7 @@ static int dev_verify(struct arguments *args)
 	do_write = 1;
 	do_erase = 1;
 
-	magic_flag = NVM_MAGIC_FLAG_QUAD;
+	magic_flag = NVM_MAGIC_FLAG_DUAL;
 
 	/* Parameters end */
 	buf = nvm_buf_alloc(geo, geo.vpg_nbytes);
@@ -148,6 +148,39 @@ static int dev_verify(struct arguments *args)
 			}
 		}
 	}
+
+	printf("\nStatistics:\n");
+	printf("-----------\n");
+
+	int erase_failures = 0;
+	int write_failures = 0;
+	int read_failures = 0;
+	int failures = 0;
+
+	for (int ch = 0; ch < max_ch; ch++) {
+		for (int lun = 0; lun < max_lun; lun++) {
+			for (int blk = 0; blk < max_blk; blk++) {
+				if (report[ch][lun][blk] & 0x10000)
+					erase_failures++;
+				if (report[ch][lun][blk] & 0x1000)
+					write_failures++;
+				if (report[ch][lun][blk] & 0xfff)
+					read_failures++;
+				if (report[ch][lun][blk])
+					failures++;
+			}
+		}
+	}
+
+	float max = max_ch * max_lun * max_blk;
+	float total = 100 * ((max / (max - (float)failures)) - 1);
+
+	printf("Erase failures     : %04u\n", erase_failures);
+	printf("Write failures     : %04u\n", write_failures);
+	printf("Read blk failures  : %04u\n", read_failures);
+
+	printf("Total capacity     : %05u/%05u %02.02f%%\n", (max_ch * max_lun * max_blk), failures, total);
+
 
 	return 0;
 }
