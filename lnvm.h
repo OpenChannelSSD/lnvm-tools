@@ -21,12 +21,27 @@ enum cmdtypes {
 
 struct arguments
 {
+	char *devname;
+
 	int cmdtype;
 	int arg_num; /* state->arg_num doesn't increase with subcommands */
 	char *dev;
 
 	/* verify */
 	int dry_run;
+
+	int do_read;
+	int do_write;
+	int do_erase;
+
+	int rw_defined;
+
+	int show_time;
+
+	int max_ch;
+	int max_lun;
+	int max_blk;
+	int skip_blk;
 };
 
 

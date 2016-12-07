@@ -1,18 +1,147 @@
 #include "lnvm.h"
 #include <omp.h>
+#include <sys/time.h>
+
+struct for_each_conf {
+	int max_ch;
+	int max_lun;
+	int max_blk;
+	int skip_blk;
+	int op;
+	int show_time;
+	int flag;
+	void *data;
+	void *meta;
+};
+
+static int rw_blk(NVM_DEV dev, NVM_GEO geo, int op, int ch, int lun, int blk, int show_time, void *data, void *meta, int flag)
+{
+	int r = 0;
+	int total = 0;
+	struct timeval t1, t2;
+	double time = 0.0;
+
+	if (show_time)
+		gettimeofday(&t1, NULL);
+
+	for (int pg = 0; pg < geo.npages; pg++) {
+		NVM_ADDR addr[geo.nplanes * geo.nsectors];
+		NVM_RET ret;
+
+		for (int i = 0; i < geo.nplanes * geo.nsectors; i++) {
+			addr[i].g.ch = ch;
+			addr[i].g.lun = lun;
+			addr[i].g.pg = pg;
+			addr[i].g.blk = blk;
+
+			addr[i].g.sec = i % geo.nsectors;
+			addr[i].g.pl = i / geo.nsectors;
+		}
+
+		if (op == 0) {
+			r = nvm_addr_read(dev, addr, geo.nplanes * geo.nsectors, data, meta, flag, &ret);
+		} else {
+			r = nvm_addr_write(dev, addr, geo.nplanes * geo.nsectors, data, meta, flag, &ret);
+		}
+
+		if (r)
+			total++;
+/*			perror("write failed");
+			nvm_ret_pr(&ret);
+			nvm_addr_pr(addr[0]);*/
+			//break;
+	}
+
+	if (show_time) {
+		gettimeofday(&t2, NULL);
+
+		time = (t2.tv_sec - t1.tv_sec) * 1000.0;
+		time += ((t2.tv_usec - t1.tv_usec)) / 1000.0;
+		time /= (double)geo.npages;
+		printf("(%02u,%02u,%03u): avg.time: %f ms\n", ch, lun, blk, time);
+	}
+	return total;
+}
+
+static int erase_blk(NVM_DEV dev, NVM_GEO geo, int ch, int lun, int blk, int show_time, int flag)
+{
+	NVM_ADDR addr[geo.nplanes];
+	NVM_RET ret;
+	struct timeval t1, t2;
+	double time = 0.0;
+	int r;
+
+	for (int pl = 0; pl < geo.nplanes; pl++) {
+		addr[pl].g.ch = ch;
+		addr[pl].g.lun = lun;
+		addr[pl].g.blk = blk;
+		addr[pl].g.pl = pl;
+	}
+
+	if (show_time)
+		gettimeofday(&t1, NULL);
+
+	r = nvm_addr_erase(dev, addr, geo.nplanes, flag, &ret);
+	if (r) {
+/*		perror("erase failed");
+		nvm_ret_pr(&ret);
+		nvm_addr_pr(addr[0]);*/
+	}
+
+	if (show_time) {
+		gettimeofday(&t2, NULL);
+
+		time = (t2.tv_sec - t1.tv_sec) * 1000.0;
+		time = (t2.tv_usec - t1.tv_usec) / 1000.0;
+		printf("(%02u,%02u,%03u): avg.time: %f ms\n", ch, lun, blk, time);
+	}
+
+	return r;
+}
+
+static int for_each_blk(NVM_DEV dev, NVM_GEO geo, struct for_each_conf *fec, int report[geo.nchannels][geo.nluns][geo.nblocks])
+{
+	int ret;
+
+#pragma omp parallel for collapse (2) schedule (static)
+	for (int ch = 0; ch < fec->max_ch; ch++) {
+		for (int lun = 0; lun < fec->max_lun; lun++) {
+			for (int blk = fec->skip_blk; blk < fec->max_blk; blk++) {
+				switch (fec->op) {
+				case 0:
+					ret = rw_blk(dev, geo, fec->op, ch, lun, blk, fec->show_time, fec->data, fec->meta, fec->flag);
+					if (ret)
+						report[ch][lun][blk] += ret;
+					break;
+				case 1:
+					ret = rw_blk(dev, geo, fec->op, ch, lun, blk, fec->show_time, fec->data, fec->meta, fec->flag);
+					if (ret)
+						report[ch][lun][blk] = 0x1000;
+					break;
+				case 2:
+					ret = erase_blk(dev, geo, ch, lun, blk, fec->show_time, fec->flag);
+					if (ret)
+						report[ch][lun][blk] = 0x10000;
+					break;
+				}
+			}
+		}
+	}
+
+	return 0;
+}
 
 static int dev_verify(struct arguments *args)
 {
 	NVM_DEV dev;
 	NVM_GEO geo;
-	void *buf;
+	struct for_each_conf fec;
 	int max_ch, max_lun, max_blk, skip_blk;
-	int do_write, do_erase;
-	int magic_flag;
+	void *buf;
 
-	dev = nvm_dev_open("/dev/nvme1n1");
+	dev = nvm_dev_open(args->devname);
 	if (!dev) {
-		printf("My life is not worth living anymore\n");
+		printf("Could not open device.\n");
 		return -EINVAL;
 	}
 	geo = nvm_dev_attr_geo(dev);
@@ -20,134 +149,68 @@ static int dev_verify(struct arguments *args)
 	nvm_dev_pr(dev);
 	nvm_geo_pr(geo);
 
-	/* Parameters begin */
-	skip_blk = 2;
+	skip_blk = 0;
 	max_ch = geo.nchannels;
 	max_lun = geo.nluns;
 	max_blk = geo.nblocks;
 
+	if (args->max_ch)
+		max_ch = args->max_ch;
+	if (args->max_lun)
+		max_lun = args->max_lun;
+	if (args->max_blk)
+		max_blk = args->max_blk;
+	if (args->skip_blk)
+		skip_blk = args->skip_blk;
+
 	int report[geo.nchannels][geo.nluns][geo.nblocks];
-
 	memset(&report, 0, sizeof(report));
-	max_ch = 1;
-	max_lun = 1;
-	max_blk = 32;
-
-	do_write = 1;
-	do_erase = 1;
-
-	magic_flag = NVM_MAGIC_FLAG_DUAL;
 
 	/* Parameters end */
 	buf = nvm_buf_alloc(geo, geo.vpg_nbytes);
 
-	if (do_erase) {
-	printf("Erase it all!\n");
-#pragma omp parallel for collapse (2) schedule (static)
-	for (int ch = 0; ch < max_ch; ch++) {
-		for (int lun = 0; lun < max_lun; lun++) {
-			/*printf("%u ", lun);*/
-			for (int blk = skip_blk; blk < max_blk; blk++) {
-				NVM_ADDR addr[geo.nplanes];
-				NVM_RET ret;
+	fec.max_ch = max_ch;
+	fec.max_lun = max_lun;
+	fec.max_blk = max_blk;
+	fec.skip_blk = skip_blk;
+	fec.data = buf;
+	fec.meta = buf;
+	fec.flag = geo.nplanes >> 1;
+	fec.show_time = args->show_time;
 
-				for (int pl = 0; pl < geo.nplanes; pl++) {
-					addr[pl].g.ch = ch;
-					addr[pl].g.lun = lun;
-					addr[pl].g.blk = blk;
-					addr[pl].g.pl = pl;
-				}
-
-				if (nvm_addr_erase(dev, addr, geo.nplanes, magic_flag, &ret)) {
-					report[ch][lun][blk] = 0x10000;
-/*					perror("erase failed");
-					nvm_ret_pr(&ret);
-					nvm_addr_pr(addr[0]);*/
-				}
-			}
-		}
-	}
+	if (args->do_erase) {
+		fec.op = 2;
+		printf("Performing erases\n");
+		for_each_blk(dev, geo, &fec, report);
 	}
 
-	if (do_write) {
-	printf("Write it all!\n");
-#pragma omp parallel for collapse (3) schedule (static)
-	for (int ch = 0; ch < max_ch; ch++) {
-		//printf("CH: %u\n", ch);
-		for (int lun = 0; lun < max_lun; lun++) {
-			//printf("LUN: %u\n", lun);
-			for (int blk = skip_blk; blk < max_blk; blk++) {
-				for (int pg = 0; pg < geo.npages; pg++) {
-					NVM_ADDR addr[geo.nplanes * geo.nsectors];
-					NVM_RET ret;
-
-					for (int i = 0; i < geo.nplanes * geo.nsectors; i++) {
-						addr[i].g.ch = ch;
-						addr[i].g.lun = lun;
-						addr[i].g.pg = pg;
-						addr[i].g.blk = blk;
-
-						addr[i].g.sec = i % geo.nsectors;
-						addr[i].g.pl = i / geo.nsectors;
-					}
-
-					if (nvm_addr_write(dev, addr, geo.nplanes * geo.nsectors, buf, buf, magic_flag, &ret)) {
-						report[ch][lun][blk] |= 0x1000;
-/*						perror("write failed");
-						nvm_ret_pr(&ret);
-						nvm_addr_pr(addr[0]);*/
-						//break;
-					}
-				}
-			}
-		}
-	}
+	if (args->do_write) {
+		fec.op = 1;
+		printf("Performing writes\n");
+		for_each_blk(dev, geo, &fec, report);
 	}
 
-	printf("Read it all!\n");
-#pragma omp parallel for collapse (3) schedule (static)
-	for (int ch = 0; ch < max_ch; ch++) {
-		/*printf("CH: %u\n", ch);*/
-		for (int lun = 0; lun < max_lun; lun++) {
-			/*printf("LUN: %u\n", lun);*/
-			for (int blk = skip_blk; blk < max_blk; blk++) {
-				for (int pg = 0; pg < geo.npages; pg++) {
-					NVM_ADDR addr[geo.nplanes * geo.nsectors];
-					NVM_RET ret;
-
-					for (int i = 0; i < geo.nplanes * geo.nsectors; i++) {
-						addr[i].g.ch = ch;
-						addr[i].g.lun = lun;
-						addr[i].g.pg = pg;
-						addr[i].g.blk = blk;
-
-						addr[i].g.sec = i % geo.nsectors;
-						addr[i].g.pl = i / geo.nsectors;
-					}
-
-					if (nvm_addr_read(dev, addr, geo.nplanes * geo.nsectors, buf, buf, magic_flag, &ret)) {
-						report[ch][lun][blk]++;
-/*						perror("read failed");
-						nvm_ret_pr(&ret);
-						nvm_addr_pr(addr[0]);*/
-						//break;
-					}
-				}
-			}
-		}
+	if (args->do_read) {
+		fec.op = 0;
+		printf("Performing reads\n");
+		for_each_blk(dev, geo, &fec, report);
 	}
 
 	free(buf);
+
+	/* Statistics */
+	printf("Begin bad blocks\n");
+	printf("[CH,LN,BLK]: E W RDS\n");
 	for (int ch = 0; ch < max_ch; ch++) {
 		for (int lun = 0; lun < max_lun; lun++) {
-			printf("CH: %u LUN: %u\n------------\n", ch, lun);
 			for (int blk = 0; blk < max_blk; blk++) {
 				if (!report[ch][lun][blk])
 					continue;
-				printf("%03u: %u %u %u\n", blk, (report[ch][lun][blk] & 0x10000) >> 16, (report[ch][lun][blk] & 0x1000) >> 12, report[ch][lun][blk] & 0xfff);
+				printf("[%02u,%02u,%03u]: %u %u %u\n", ch, lun, blk, (report[ch][lun][blk] & 0x10000) >> 16, (report[ch][lun][blk] & 0x1000) >> 12, report[ch][lun][blk] & 0xfff);
 			}
 		}
 	}
+	printf("End bad blocks\n");
 
 	printf("\nStatistics:\n");
 	printf("-----------\n");
@@ -173,7 +236,7 @@ static int dev_verify(struct arguments *args)
 	}
 
 	float max = max_ch * max_lun * max_blk;
-	float total = 100 * ((max / (max - (float)failures)) - 1);
+	float total = 100 * (1 / (max / (float)failures));
 
 	printf("Erase failures     : %04u\n", erase_failures);
 	printf("Write failures     : %04u\n", write_failures);
@@ -187,17 +250,25 @@ static int dev_verify(struct arguments *args)
 
 static struct argp_option opt_dev_verify[] =
 {
-	{"device", 'd', "DEVICE", 0, "LightNVM device e.g. nvme0n1"},
-	{"dryrun", 'd', 0, 0, "Do a dryrun by not updating bad blocks when bad blocks are found."},
+	{"device", 'd', "DEVICE", 0, "e.g. /dev/nvme0n1"},
+	{"dryrun", 'n', 0, 0, "Do a dryrun by not updating bad blocks when bad blocks are found."},
+	{"reads", 'r', 0, 0, "Do read test"},
+	{"writes", 'w', 0, 0, "Do write test"},
+	{"erases", 'e', 0, 0, "Do erase test"},
+	{"timings", 't', 0, 0, "Show timings per block"},
+	{"maxch", 'c', "max_ch", 0, "Limit channels to 0..X"},
+	{"maxlun", 'l', "max_lun", 0, "Limit LUNs to 0..Y"},
+	{"maxblk", 'b', "max_blk", 0, "Limit Blocks to 0..Z"},
+	{"skipblk", 's', "skip_blk", 0, "Skip first blocks to X..BLKS"},
 	{0}
 };
 
 static char doc_dev_verify[] =
 		"\n\vExamples:\n"
 		" Verify disk by writing to all good blocks and read them back. Marks blocks bad if found.\n"
-		"  lnvm factory /dev/nvme0n1\n"
+		"  lnvm verify /dev/nvme0n1\n"
 		" Verify disk with a dry-run. Only overwrite disk and read back data and report state. Do not mark blocks.\n"
-		"  lnvm factory -d /dev/nvme0n1\n";
+		"  lnvm verify -d /dev/nvme0n1\n";
 
 static error_t parse_dev_verify_opt(int key, char *arg, struct argp_state *state)
 {
@@ -205,17 +276,82 @@ static error_t parse_dev_verify_opt(int key, char *arg, struct argp_state *state
 
 	switch (key) {
 	case 'd':
+		if (!arg || args->devname)
+			argp_usage(state);
+		if (strlen(arg) > DISK_NAME_LEN) {
+			printf("Argument too long\n");
+			argp_usage(state);
+		}
+		printf("... %s\n", arg);
+		args->devname = arg;
+		args->arg_num++;
+		break;
+	case 'n':
 		if (args->dry_run)
 			argp_usage(state);
 		args->dry_run = 1;
 		args->arg_num++;
 		break;
+	case 'r':
+		if (args->do_read)
+			argp_usage(state);
+		args->do_read = 1;
+		args->rw_defined = 1;
+		args->arg_num++;
+		break;
+	case 'w':
+		if (args->do_write)
+			argp_usage(state);
+		args->do_write = 1;
+		args->rw_defined = 1;
+		args->arg_num++;
+		break;
+	case 'e':
+		if (args->do_erase)
+			argp_usage(state);
+		args->do_erase = 1;
+		args->rw_defined = 1;
+		args->arg_num++;
+		break;
+	case 't':
+		if (args->show_time)
+			argp_usage(state);
+		args->show_time = 1;
+		args->arg_num++;
+		break;
+	case 'c':
+		printf("... %s\n", arg);
+		if (!arg || args->max_ch)
+			argp_usage(state);
+		args->max_ch = atoi(arg);
+		args->arg_num++;
+		break;
+	case 'l':
+		if (!arg || args->max_lun)
+			argp_usage(state);
+		args->max_lun = atoi(arg);
+		args->arg_num++;
+		break;
+	case 'b':
+		if (!arg || args->max_blk)
+			argp_usage(state);
+		args->max_blk = atoi(arg);
+		args->arg_num++;
+		break;
+	case 's':
+		if (!arg || args->skip_blk)
+			argp_usage(state);
+		args->skip_blk = atoi(arg);
+		args->arg_num++;
+		break;
 	case ARGP_KEY_ARG:
-		if (args->arg_num > 2)
+		if (args->arg_num > 9)
 			argp_usage(state);
 		break;
 	case ARGP_KEY_END:
-		if (args->arg_num < 0)
+		if (!args->devname)
+			argp_usage(state);
+		if (args->arg_num < 1)
 			argp_usage(state);
 		break;
 	default:
@@ -241,6 +377,12 @@ static void cmd_dev_verify(struct argp_state *state, struct arguments *args)
 	sprintf(argv[0], "%s verify", state->name);
 
 	argp_parse(&argp_dev_verify, argc, argv, ARGP_IN_ORDER, &argc, args);
+
+	if (!args->rw_defined) {
+		args->do_read = 1;
+		args->do_write = 1;
+		args->do_erase = 1;
+	}
 
 	free(argv[0]);
 	argv[0] = argv0;
