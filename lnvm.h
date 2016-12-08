@@ -17,6 +17,8 @@
 
 enum cmdtypes {
 	LIGHTNVM_DEV_VERIFY = 1,
+	LIGHTNVM_DEV_PLANE = 2,
+
 };
 
 struct arguments
@@ -42,6 +44,8 @@ struct arguments
 	int max_lun;
 	int max_blk;
 	int skip_blk;
+
+	int plane_hint;
 };
 
 
