@@ -10,6 +10,7 @@ struct for_each_conf {
 	int op;
 	int show_time;
 	int flag;
+	int dry_run;
 	void *data;
 	void *meta;
 };
@@ -108,11 +109,39 @@ static int erase_blk(NVM_DEV dev, NVM_GEO geo, int ch, int lun, int blk, int sho
 static int for_each_blk(NVM_DEV dev, NVM_GEO geo, struct for_each_conf *fec, int report[geo.nchannels][geo.nluns][geo.nblocks])
 {
 	int ret;
-
 #pragma omp parallel for collapse (2) schedule (static)
 	for (int ch = 0; ch < fec->max_ch; ch++) {
 		for (int lun = 0; lun < fec->max_lun; lun++) {
+			NVM_BBT* bbt;
+			NVM_RET bbt_ret;
+			NVM_ADDR bbt_addr;
+
+			bbt_addr.ppa = 0;
+			bbt_addr.g.ch = ch;
+			bbt_addr.g.lun = lun;
+
+			bbt = nvm_bbt_get(dev, bbt_addr, &bbt_ret);
+			if (!bbt) {
+				perror("Could not retrieve bad block table");
+				nvm_ret_pr(&bbt_ret);
+				continue;
+			}
+
 			for (int blk = fec->skip_blk; blk < fec->max_blk; blk++) {
+				int skip = 0;
+				/* bad block check */
+				for (int pl = 0; pl < geo.nplanes; pl++) {
+					if (bbt->blks[(blk * geo.nplanes) + pl]) {
+						printf("(%02u,%02u,%03u): skip\n", ch, lun, blk);
+						skip = 1;
+						report[ch][lun][blk] = 0x100000;
+						break;
+					}
+				}
+
+				if (skip)
+					continue;
+
 				switch (fec->op) {
 				case 0:
 					ret = rw_blk(dev, geo, fec->op, ch, lun, blk, fec->show_time, fec->data, fec->meta, fec->flag);
@@ -130,7 +159,30 @@ static int for_each_blk(NVM_DEV dev, NVM_GEO geo, struct for_each_conf *fec, int
 						report[ch][lun][blk] = 0x10000;
 					break;
 				}
+
+				if (report[ch][lun][blk]) {
+					NVM_ADDR addr[geo.nplanes];
+
+					for (int pl = 0; pl < geo.nplanes; pl++) {
+						addr[pl].ppa = 0;
+						addr[pl].g.ch = ch;
+						addr[pl].g.lun = lun;
+						addr[pl].g.blk = blk;
+						addr[pl].g.pl = pl;
+					}
+					if (fec->dry_run) {
+						printf("(%02u,%02u,%03u): marked bad (dry_run)\n", ch, lun, blk);
+					}
+					else {
+						nvm_bbt_mark(dev, addr, geo.nplanes, 0x2, NULL);
+						printf("(%02u,%02u,%03u): marked bad\n", ch, lun, blk);
+					}
+					report[ch][lun][blk] = 0x1000000;
+				}
+
 			}
+			free(bbt->blks);
+			free(bbt);
 		}
 	}
 
@@ -159,11 +211,17 @@ static void print_statistics(NVM_GEO geo, int max_ch, int max_lun, int max_blk, 
 	int erase_failures = 0;
 	int write_failures = 0;
 	int read_failures = 0;
+	int skips = 0;
+	int markedbad = 0;
 	int failures = 0;
 
 	for (int ch = 0; ch < max_ch; ch++) {
 		for (int lun = 0; lun < max_lun; lun++) {
 			for (int blk = 0; blk < max_blk; blk++) {
+				if (report[ch][lun][blk] & 0x1000000)
+					markedbad++;
+				if (report[ch][lun][blk] & 0x100000)
+					skips++;
 				if (report[ch][lun][blk] & 0x10000)
 					erase_failures++;
 				if (report[ch][lun][blk] & 0x1000)
@@ -182,6 +240,8 @@ static void print_statistics(NVM_GEO geo, int max_ch, int max_lun, int max_blk, 
 	printf("Erase failures     : %04u\n", erase_failures);
 	printf("Write failures     : %04u\n", write_failures);
 	printf("Read blk failures  : %04u\n", read_failures);
+	printf("Skipped            : %04u\n", skips);
+	printf("Marked bad         : %04u\n", markedbad);
 
 	printf("Total capacity     : %05u/%05u %02.02f%%\n", (max_ch * max_lun * max_blk) - skip_blk, failures, total);
 }
@@ -233,6 +293,8 @@ static int dev_verify(struct arguments *args)
 	fec.meta = buf;
 	fec.flag = geo.nplanes >> 1;
 	fec.show_time = args->show_time;
+	fec.dry_run = args->dry_run;
+
 	if (args->plane_hint) {
 		if (geo.nplanes < args->plane_hint) {
 			printf("Plane hint not supported. Will use: %x\n", fec.flag);
