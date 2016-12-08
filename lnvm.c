@@ -109,6 +109,7 @@ static int erase_blk(NVM_DEV dev, NVM_GEO geo, int ch, int lun, int blk, int sho
 static int for_each_blk(NVM_DEV dev, NVM_GEO geo, struct for_each_conf *fec, int report[geo.nchannels][geo.nluns][geo.nblocks])
 {
 	int ret;
+
 #pragma omp parallel for collapse (2) schedule (static)
 	for (int ch = 0; ch < fec->max_ch; ch++) {
 		for (int lun = 0; lun < fec->max_lun; lun++) {
@@ -192,7 +193,7 @@ static int for_each_blk(NVM_DEV dev, NVM_GEO geo, struct for_each_conf *fec, int
 static void print_statistics(NVM_GEO geo, int max_ch, int max_lun, int max_blk, int skip_blk, int report[geo.nchannels][geo.nluns][geo.nblocks])
 {
 	/* Statistics */
-	printf("Begin bad blocks\n");
+	printf("Begin block notications\n");
 	printf("[CH,LN,BLK]: E W RDS\n");
 	for (int ch = 0; ch < max_ch; ch++) {
 		for (int lun = 0; lun < max_lun; lun++) {
@@ -203,7 +204,7 @@ static void print_statistics(NVM_GEO geo, int max_ch, int max_lun, int max_blk, 
 			}
 		}
 	}
-	printf("End bad blocks\n");
+	printf("End block notifications\n");
 
 	printf("\nStatistics:\n");
 	printf("-----------\n");

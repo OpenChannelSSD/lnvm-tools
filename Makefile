@@ -1,6 +1,6 @@
 CFLAGS := -std=gnu99 -O2 -g -Wall
 LDFLAGS := -llightnvm -fopenmp
-EXEC = lnvm
+EXEC = lnvm-tool
 INSTALL ?= install
 DESTDIR =
 PREFIX ?= /usr/local
