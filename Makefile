@@ -8,10 +8,10 @@ SBINDIR = $(PREFIX)/sbin
 
 default: $(EXEC)
 
-lnvm: lnvm.c $(LIGHTNVM_HEADER)
+lnvm-tool: lnvm.c $(LIGHTNVM_HEADER)
 	$(CC) $(CFLAGS) lnvm.c $(LDFLAGS) -o $(EXEC)
 
-all: lnvm
+all: lnvm-tool
 
 clean:
 	rm -f $(EXEC) *.o *~ a.out
@@ -20,7 +20,7 @@ clobber: clean
 
 install-bin: default
 	$(INSTALL) -d $(DESTDIR)$(SBINDIR)
-	$(INSTALL) -m 755 lnvm $(DESTDIR)$(SBINDIR)
+	$(INSTALL) -m 755 lnvm-tool $(DESTDIR)$(SBINDIR)
 
 install: install-bin
 
