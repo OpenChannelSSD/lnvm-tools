@@ -51,12 +51,13 @@ static int rw_blk(NVM_DEV dev, NVM_GEO geo, int op, int ch, int lun, int blk, in
 			r = nvm_addr_write(dev, addr, geo.nplanes * geo.nsectors, data, meta, flag, &ret);
 		}
 
-		if (r)
-			total++;
+		if (r) {
+			if (ret.result != 0x4700)
+				total++;
+		}
 /*			perror("write failed");
-			nvm_ret_pr(&ret);
-			nvm_addr_pr(addr[0]);*/
-			//break;
+			nvm_addr_pr(addr[0]);
+			//break;*/
 	}
 
 	if (show_time) {
@@ -247,7 +248,6 @@ static void print_statistics(NVM_GEO geo, int max_ch, int max_lun, int max_blk, 
 	printf("Total capacity     : %05u/%05u %02.02f%%\n", (max_ch * max_lun * max_blk) - skip_blk, failures, total);
 }
 
-
 static int dev_verify(struct arguments *args)
 {
 	NVM_DEV dev;
@@ -271,12 +271,12 @@ static int dev_verify(struct arguments *args)
 	max_lun = geo.nluns;
 	max_blk = geo.nblocks;
 
-	if (args->max_ch)
-		max_ch = args->max_ch;
-	if (args->max_lun)
-		max_lun = args->max_lun;
-	if (args->max_blk)
-		max_blk = args->max_blk;
+	if (args->max_ch_set)
+		max_ch = args->max_ch + 1;
+	if (args->max_lun_set)
+		max_lun = args->max_lun + 1;
+	if (args->max_blk_set)
+		max_blk = args->max_blk + 1;
 	if (args->skip_blk)
 		skip_blk = args->skip_blk;
 
@@ -401,21 +401,23 @@ static error_t parse_dev_verify_opt(int key, char *arg, struct argp_state *state
 		args->arg_num++;
 		break;
 	case 'c':
-		printf("... %s\n", arg);
-		if (!arg || args->max_ch)
+		if (!arg || args->max_ch_set)
 			argp_usage(state);
+		args->max_ch_set = 1;
 		args->max_ch = atoi(arg);
 		args->arg_num++;
 		break;
 	case 'l':
-		if (!arg || args->max_lun)
+		if (!arg || args->max_lun_set)
 			argp_usage(state);
+		args->max_lun_set = 1;
 		args->max_lun = atoi(arg);
 		args->arg_num++;
 		break;
 	case 'b':
-		if (!arg || args->max_blk)
+		if (!arg || args->max_blk_set)
 			argp_usage(state);
+		args->max_blk_set = 1;
 		args->max_blk = atoi(arg);
 		args->arg_num++;
 		break;
@@ -523,12 +525,12 @@ static int dev_plane(struct arguments *args)
 	max_lun = geo.nluns;
 	max_blk = geo.nblocks;
 
-	if (args->max_ch)
-		max_ch = args->max_ch;
-	if (args->max_lun)
-		max_lun = args->max_lun;
-	if (args->max_blk)
-		max_blk = args->max_blk;
+	if (args->max_ch_set)
+		max_ch = args->max_ch +1;
+	if (args->max_lun_set)
+		max_lun = args->max_lun + 1;
+	if (args->max_blk_set)
+		max_blk = args->max_blk + 1;
 	if (args->skip_blk)
 		skip_blk = args->skip_blk;
 
@@ -546,7 +548,6 @@ static int dev_plane(struct arguments *args)
 	fec.meta = buf;
 	fec.flag = geo.nplanes >> 1;
 	fec.show_time = args->show_time;
-
 
 	/* Test 1 Simple */
 	printf("1. Single Erase, Write, Read Test\n");

@@ -41,8 +41,11 @@ struct arguments
 	int show_time;
 
 	int max_ch;
+	int max_ch_set;
 	int max_lun;
+	int max_lun_set;
 	int max_blk;
+	int max_blk_set;
 	int skip_blk;
 
 	int plane_hint;
