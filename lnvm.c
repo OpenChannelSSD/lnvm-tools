@@ -674,21 +674,23 @@ static error_t parse_dev_plane_opt(int key, char *arg, struct argp_state *state)
 		args->arg_num++;
 		break;
 	case 'c':
-		printf("... %s\n", arg);
-		if (!arg || args->max_ch)
+		if (!arg || args->max_ch_set)
 			argp_usage(state);
+		args->max_ch_set = 1;
 		args->max_ch = atoi(arg);
 		args->arg_num++;
 		break;
 	case 'l':
-		if (!arg || args->max_lun)
+		if (!arg || args->max_lun_set)
 			argp_usage(state);
+		args->max_lun_set = 1;
 		args->max_lun = atoi(arg);
 		args->arg_num++;
 		break;
 	case 'b':
-		if (!arg || args->max_blk)
+		if (!arg || args->max_blk_set)
 			argp_usage(state);
+		args->max_blk_set = 1;
 		args->max_blk = atoi(arg);
 		args->arg_num++;
 		break;
