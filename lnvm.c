@@ -52,7 +52,7 @@ static int rw_blk(NVM_DEV dev, NVM_GEO geo, int op, int ch, int lun, int blk, in
 		}
 
 		if (r) {
-			if (ret.result != 0x4700)
+			if (ret.result != 0x700)
 				total++;
 		}
 /*			perror("write failed");
