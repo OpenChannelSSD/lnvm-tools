@@ -15,7 +15,7 @@ struct for_each_conf {
 	void *meta;
 };
 
-static int rw_blk(NVM_DEV dev, NVM_GEO geo, int op, int ch, int lun, int blk, int show_time, void *data, void *meta, int flag)
+static int rw_blk(struct nvm_dev *dev, const struct nvm_geo *geo, int op, int ch, int lun, int blk, int show_time, void *data, void *meta, int flag)
 {
 	int r = 0;
 	int total = 0;
@@ -25,22 +25,22 @@ static int rw_blk(NVM_DEV dev, NVM_GEO geo, int op, int ch, int lun, int blk, in
 	if (show_time)
 		gettimeofday(&t1, NULL);
 
-	for (int pg = 0; pg < geo.npages; pg++) {
-		NVM_ADDR addr[geo.nplanes * geo.nsectors];
-		NVM_RET ret;
+	for (int pg = 0; pg < geo->npages; pg++) {
+		struct nvm_addr addr[geo->nplanes * geo->nsectors];
+		struct nvm_ret ret;
 
-		for (int i = 0; i < geo.nplanes * geo.nsectors; i++) {
+		for (int i = 0; i < geo->nplanes * geo->nsectors; i++) {
 			addr[i].g.ch = ch;
 			addr[i].g.lun = lun;
 			addr[i].g.pg = pg;
 			addr[i].g.blk = blk;
 
-			addr[i].g.sec = i % geo.nsectors;
-			addr[i].g.pl = i / geo.nsectors;
+			addr[i].g.sec = i % geo->nsectors;
+			addr[i].g.pl = i / geo->nsectors;
 		}
 
 		if (op == 0) {
-			r = nvm_addr_read(dev, addr, geo.nplanes * geo.nsectors, data, meta, flag, &ret);
+			r = nvm_addr_read(dev, addr, geo->nplanes * geo->nsectors, data, meta, flag, &ret);
 		} else {
 			char *vd = data;
 			vd[0] = 0x3;
@@ -48,7 +48,7 @@ static int rw_blk(NVM_DEV dev, NVM_GEO geo, int op, int ch, int lun, int blk, in
 			vd[2] = 0x3;
 			vd[3] = 0x3;
 			vd[4] = 0x7;
-			r = nvm_addr_write(dev, addr, geo.nplanes * geo.nsectors, data, meta, flag, &ret);
+			r = nvm_addr_write(dev, addr, geo->nplanes * geo->nsectors, data, meta, flag, &ret);
 		}
 
 		if (r) {
@@ -66,20 +66,20 @@ static int rw_blk(NVM_DEV dev, NVM_GEO geo, int op, int ch, int lun, int blk, in
 		time = (t2.tv_sec - t1.tv_sec) * 1000.0;
 		time += ((t2.tv_usec - t1.tv_usec)) / 1000.0;
 		printf("(%02u,%02u,%03u): avg.time: %f ms (total: %f ms)\n", ch, lun, blk,
-				(time / (double)(geo.npages * geo.nplanes * geo.nsectors)) * (geo.nplanes * geo.nsectors), time);
+				(time / (double)(geo->npages * geo->nplanes * geo->nsectors)) * (geo->nplanes * geo->nsectors), time);
 	}
 	return total;
 }
 
-static int erase_blk(NVM_DEV dev, NVM_GEO geo, int ch, int lun, int blk, int show_time, int flag)
+static int erase_blk(struct nvm_dev *dev, const struct nvm_geo *geo, int ch, int lun, int blk, int show_time, int flag)
 {
-	NVM_ADDR addr[geo.nplanes];
-	NVM_RET ret;
+	struct nvm_addr addr[geo->nplanes];
+	struct nvm_ret ret;
 	struct timeval t1, t2;
 	double time = 0.0;
 	int r;
 
-	for (int pl = 0; pl < geo.nplanes; pl++) {
+	for (int pl = 0; pl < geo->nplanes; pl++) {
 		addr[pl].g.ch = ch;
 		addr[pl].g.lun = lun;
 		addr[pl].g.blk = blk;
@@ -89,7 +89,7 @@ static int erase_blk(NVM_DEV dev, NVM_GEO geo, int ch, int lun, int blk, int sho
 	if (show_time)
 		gettimeofday(&t1, NULL);
 
-	r = nvm_addr_erase(dev, addr, geo.nplanes, flag, &ret);
+	r = nvm_addr_erase(dev, addr, geo->nplanes, flag, &ret);
 	if (r) {
 /*		perror("erase failed");
 		nvm_ret_pr(&ret);
@@ -107,16 +107,16 @@ static int erase_blk(NVM_DEV dev, NVM_GEO geo, int ch, int lun, int blk, int sho
 	return r;
 }
 
-static int for_each_blk(NVM_DEV dev, NVM_GEO geo, struct for_each_conf *fec, int report[geo.nchannels][geo.nluns][geo.nblocks])
+static int for_each_blk(struct nvm_dev *dev, const struct nvm_geo *geo, struct for_each_conf *fec, int report[geo->nchannels][geo->nluns][geo->nblocks])
 {
 	int ret;
 
 #pragma omp parallel for collapse (2) schedule (static)
 	for (int ch = 0; ch < fec->max_ch; ch++) {
 		for (int lun = 0; lun < fec->max_lun; lun++) {
-			NVM_BBT* bbt;
-			NVM_RET bbt_ret;
-			NVM_ADDR bbt_addr;
+			struct nvm_bbt* bbt;
+			struct nvm_ret bbt_ret;
+			struct nvm_addr bbt_addr;
 
 			bbt_addr.ppa = 0;
 			bbt_addr.g.ch = ch;
@@ -132,8 +132,8 @@ static int for_each_blk(NVM_DEV dev, NVM_GEO geo, struct for_each_conf *fec, int
 			for (int blk = fec->skip_blk; blk < fec->max_blk; blk++) {
 				int skip = 0;
 				/* bad block check */
-				for (int pl = 0; pl < geo.nplanes; pl++) {
-					if (bbt->blks[(blk * geo.nplanes) + pl]) {
+				for (int pl = 0; pl < geo->nplanes; pl++) {
+					if (bbt->blks[(blk * geo->nplanes) + pl]) {
 						printf("(%02u,%02u,%03u): skip\n", ch, lun, blk);
 						skip = 1;
 						report[ch][lun][blk] = 0x100000;
@@ -163,9 +163,9 @@ static int for_each_blk(NVM_DEV dev, NVM_GEO geo, struct for_each_conf *fec, int
 				}
 
 				if (report[ch][lun][blk]) {
-					NVM_ADDR addr[geo.nplanes];
+					struct nvm_addr addr[geo->nplanes];
 
-					for (int pl = 0; pl < geo.nplanes; pl++) {
+					for (int pl = 0; pl < geo->nplanes; pl++) {
 						addr[pl].ppa = 0;
 						addr[pl].g.ch = ch;
 						addr[pl].g.lun = lun;
@@ -176,7 +176,7 @@ static int for_each_blk(NVM_DEV dev, NVM_GEO geo, struct for_each_conf *fec, int
 						printf("(%02u,%02u,%03u): marked bad (dry_run)\n", ch, lun, blk);
 					}
 					else {
-						nvm_bbt_mark(dev, addr, geo.nplanes, 0x2, NULL);
+						nvm_bbt_mark(dev, addr, geo->nplanes, 0x2, NULL);
 						printf("(%02u,%02u,%03u): marked bad\n", ch, lun, blk);
 					}
 					report[ch][lun][blk] = 0x1000000;
@@ -191,7 +191,7 @@ static int for_each_blk(NVM_DEV dev, NVM_GEO geo, struct for_each_conf *fec, int
 	return 0;
 }
 
-static void print_statistics(NVM_GEO geo, int max_ch, int max_lun, int max_blk, int skip_blk, int report[geo.nchannels][geo.nluns][geo.nblocks])
+static void print_statistics(const struct nvm_geo *geo, int max_ch, int max_lun, int max_blk, int skip_blk, int report[geo->nchannels][geo->nluns][geo->nblocks])
 {
 	/* Statistics */
 	printf("Begin block notications\n");
@@ -250,8 +250,8 @@ static void print_statistics(NVM_GEO geo, int max_ch, int max_lun, int max_blk, 
 
 static int dev_verify(struct arguments *args)
 {
-	NVM_DEV dev;
-	NVM_GEO geo;
+	struct nvm_dev *dev;
+	const struct nvm_geo *geo;
 	struct for_each_conf fec;
 	int max_ch, max_lun, max_blk, skip_blk;
 	void *buf;
@@ -267,9 +267,9 @@ static int dev_verify(struct arguments *args)
 	nvm_geo_pr(geo);
 
 	skip_blk = 0;
-	max_ch = geo.nchannels;
-	max_lun = geo.nluns;
-	max_blk = geo.nblocks;
+	max_ch = geo->nchannels;
+	max_lun = geo->nluns;
+	max_blk = geo->nblocks;
 
 	if (args->max_ch_set)
 		max_ch = args->max_ch + 1;
@@ -280,11 +280,11 @@ static int dev_verify(struct arguments *args)
 	if (args->skip_blk)
 		skip_blk = args->skip_blk;
 
-	int report[geo.nchannels][geo.nluns][geo.nblocks];
+	int report[geo->nchannels][geo->nluns][geo->nblocks];
 	memset(&report, 0, sizeof(report));
 
 	/* Parameters end */
-	buf = nvm_buf_alloc(geo, geo.vpg_nbytes);
+	buf = nvm_buf_alloc(geo, geo->vpg_nbytes);
 
 	fec.max_ch = max_ch;
 	fec.max_lun = max_lun;
@@ -292,12 +292,12 @@ static int dev_verify(struct arguments *args)
 	fec.skip_blk = skip_blk;
 	fec.data = buf;
 	fec.meta = buf;
-	fec.flag = geo.nplanes >> 1;
+	fec.flag = geo->nplanes >> 1;
 	fec.show_time = args->show_time;
 	fec.dry_run = args->dry_run;
 
 	if (args->plane_hint) {
-		if (geo.nplanes < args->plane_hint) {
+		if (geo->nplanes < args->plane_hint) {
 			printf("Plane hint not supported. Will use: %x\n", fec.flag);
 		} else {
 			fec.flag = args->plane_hint >> 1;
@@ -478,7 +478,7 @@ static void cmd_dev_verify(struct argp_state *state, struct arguments *args)
 	state->next += argc - 1;
 }
 
-void test_plane(NVM_DEV dev, NVM_GEO geo, struct for_each_conf *fec, int report[geo.nchannels][geo.nluns][geo.nblocks],
+void test_plane(struct nvm_dev *dev, const struct nvm_geo *geo, struct for_each_conf *fec, int report[geo->nchannels][geo->nluns][geo->nblocks],
 				int rflag, int wflag, int eflag)
 {
 	fec->flag = eflag;
@@ -504,8 +504,8 @@ void test_plane(NVM_DEV dev, NVM_GEO geo, struct for_each_conf *fec, int report[
 
 static int dev_plane(struct arguments *args)
 {
-	NVM_DEV dev;
-	NVM_GEO geo;
+	struct nvm_dev *dev;
+	const struct nvm_geo *geo;
 	struct for_each_conf fec;
 	int max_ch, max_lun, max_blk, skip_blk;
 	void *buf;
@@ -521,9 +521,9 @@ static int dev_plane(struct arguments *args)
 	nvm_geo_pr(geo);
 
 	skip_blk = 0;
-	max_ch = geo.nchannels;
-	max_lun = geo.nluns;
-	max_blk = geo.nblocks;
+	max_ch = geo->nchannels;
+	max_lun = geo->nluns;
+	max_blk = geo->nblocks;
 
 	if (args->max_ch_set)
 		max_ch = args->max_ch +1;
@@ -534,11 +534,11 @@ static int dev_plane(struct arguments *args)
 	if (args->skip_blk)
 		skip_blk = args->skip_blk;
 
-	int report[geo.nchannels][geo.nluns][geo.nblocks];
+	int report[geo->nchannels][geo->nluns][geo->nblocks];
 	memset(&report, 0, sizeof(report));
 
 	/* Parameters end */
-	buf = nvm_buf_alloc(geo, geo.vpg_nbytes);
+	buf = nvm_buf_alloc(geo, geo->vpg_nbytes);
 
 	fec.max_ch = max_ch;
 	fec.max_lun = max_lun;
@@ -546,7 +546,7 @@ static int dev_plane(struct arguments *args)
 	fec.skip_blk = skip_blk;
 	fec.data = buf;
 	fec.meta = buf;
-	fec.flag = geo.nplanes >> 1;
+	fec.flag = geo->nplanes >> 1;
 	fec.show_time = args->show_time;
 
 	/* Test 1 Simple */
@@ -561,7 +561,7 @@ static int dev_plane(struct arguments *args)
 	test_plane(dev, geo, &fec, report, 0x1, 0x1, 0x1);
 	memset(&report, 0, sizeof(report));
 
-	if (geo.nplanes == 4) {
+	if (geo->nplanes == 4) {
 		printf("1. Quad Erase, Write, Read Test\n");
 		printf("---------------------------------\n");
 		test_plane(dev, geo, &fec, report, 0x2, 0x2, 0x2);
@@ -581,7 +581,7 @@ static int dev_plane(struct arguments *args)
 	test_plane(dev, geo, &fec, report, 0x0, 0x0, 0x1);
 	memset(&report, 0, sizeof(report));
 
-	if (geo.nplanes == 4) {
+	if (geo->nplanes == 4) {
 		printf("2. Single Erase, Write. Quad Read Test\n");
 		printf("---------------------------------\n");
 		test_plane(dev, geo, &fec, report, 0x0, 0x0, 0x2);
@@ -600,7 +600,7 @@ static int dev_plane(struct arguments *args)
 	test_plane(dev, geo, &fec, report, 0x1, 0x1, 0x0);
 	memset(&report, 0, sizeof(report));
 
-	if (geo.nplanes == 4) {
+	if (geo->nplanes == 4) {
 		printf("3. Quad Erase, Write. Single Read Test\n");
 		printf("---------------------------------\n");
 		test_plane(dev, geo, &fec, report, 0x2, 0x2, 0x0);
