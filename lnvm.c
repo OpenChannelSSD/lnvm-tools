@@ -261,7 +261,7 @@ static int dev_verify(struct arguments *args)
 		printf("Could not open device.\n");
 		return -EINVAL;
 	}
-	geo = nvm_dev_attr_geo(dev);
+	geo = nvm_dev_get_geo(dev);
 
 	nvm_dev_pr(dev);
 	nvm_geo_pr(geo);
@@ -515,7 +515,7 @@ static int dev_plane(struct arguments *args)
 		printf("Could not open device.\n");
 		return -EINVAL;
 	}
-	geo = nvm_dev_attr_geo(dev);
+	geo = nvm_dev_get_geo(dev);
 
 	nvm_dev_pr(dev);
 	nvm_geo_pr(geo);
