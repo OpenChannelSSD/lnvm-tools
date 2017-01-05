@@ -100,7 +100,7 @@ static int erase_blk(struct nvm_dev *dev, const struct nvm_geo *geo, int ch, int
 		gettimeofday(&t2, NULL);
 
 		time = (t2.tv_sec - t1.tv_sec) * 1000.0;
-		time = (t2.tv_usec - t1.tv_usec) / 1000.0;
+		time += (t2.tv_usec - t1.tv_usec) / 1000.0;
 		printf("(%02u,%02u,%03u): avg.time: %f ms\n", ch, lun, blk, time);
 	}
 
