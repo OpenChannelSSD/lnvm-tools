@@ -80,6 +80,7 @@ static int erase_blk(struct nvm_dev *dev, const struct nvm_geo *geo, int ch, int
 	int r;
 
 	for (int pl = 0; pl < geo->nplanes; pl++) {
+		addr[pl].ppa = 0;
 		addr[pl].g.ch = ch;
 		addr[pl].g.lun = lun;
 		addr[pl].g.blk = blk;
