@@ -123,7 +123,10 @@ static int for_each_blk(struct nvm_dev *dev, const struct nvm_geo *geo, struct f
 			bbt_addr.g.ch = ch;
 			bbt_addr.g.lun = lun;
 
-			bbt = nvm_bbt_get(dev, bbt_addr, &bbt_ret);
+			#pragma omp critical(BBT_ACCESS)
+			{
+				bbt = nvm_bbt_alloc_cp(nvm_bbt_get(dev, bbt_addr, &bbt_ret));
+			}
 			if (!bbt) {
 				perror("Could not retrieve bad block table");
 				nvm_ret_pr(&bbt_ret);
@@ -177,15 +180,17 @@ static int for_each_blk(struct nvm_dev *dev, const struct nvm_geo *geo, struct f
 						printf("(%02u,%02u,%03u): marked bad (dry_run)\n", ch, lun, blk);
 					}
 					else {
-						nvm_bbt_mark(dev, addr, geo->nplanes, 0x2, NULL);
-						printf("(%02u,%02u,%03u): marked bad\n", ch, lun, blk);
+						#pragma omp critical(BBT_ACCESS)
+						{
+							nvm_bbt_mark(dev, addr, geo->nplanes, 0x2, NULL);
+							printf("(%02u,%02u,%03u): marked bad\n", ch, lun, blk);
+						}
 					}
 					report[ch][lun][blk] = 0x1000000;
 				}
-
 			}
-			free(bbt->blks);
-			free(bbt);
+
+			nvm_bbt_free(bbt);
 		}
 	}
 
