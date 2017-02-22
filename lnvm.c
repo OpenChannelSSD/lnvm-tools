@@ -290,7 +290,7 @@ static int dev_verify(struct arguments *args)
 	memset(&report, 0, sizeof(report));
 
 	/* Parameters end */
-	buf = nvm_buf_alloc(geo, geo->vpg_nbytes);
+	buf = nvm_buf_alloc(geo, geo->nplanes * geo->nsectors * geo->sector_nbytes);
 
 	fec.max_ch = max_ch;
 	fec.max_lun = max_lun;
@@ -544,7 +544,7 @@ static int dev_plane(struct arguments *args)
 	memset(&report, 0, sizeof(report));
 
 	/* Parameters end */
-	buf = nvm_buf_alloc(geo, geo->vpg_nbytes);
+	buf = nvm_buf_alloc(geo, geo->nplanes * geo->nsectors * geo->sector_nbytes);
 
 	fec.max_ch = max_ch;
 	fec.max_lun = max_lun;
